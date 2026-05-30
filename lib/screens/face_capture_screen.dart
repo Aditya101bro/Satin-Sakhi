@@ -25,7 +25,7 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
 
   Future<void> _init() async {
     final front = cameras.firstWhere((c) => c.lensDirection == CameraLensDirection.front, orElse: () => cameras.first);
-    final c = CameraController(front, ResolutionPreset.high, enableAudio: false, imageFormatGroup: ImageFormatGroup.yuv420);
+    final c = CameraController(front, ResolutionPreset.high, enableAudio: false, imageFormatGroup: ImageFormatGroup.nv21);
     try { await c.initialize(); await c.startImageStream(_onFrame); _cam = c; if (mounted) setState((){}); _audio.play('selfie_instruction'); }
     catch (_) { if (mounted) setState(() => _hint = 'कैमरा शुरू नहीं हो पाया'); }
   }
