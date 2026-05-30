@@ -1,6 +1,6 @@
-import 'package:flutter/services.dart';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
@@ -19,7 +19,7 @@ class FaceCaptureScreen extends StatefulWidget {
 class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
   CameraController? _cam; final _audio = AudioService(); final _face = FaceAnalyzer();
   GuideState _guide = GuideState.scanning;
-  String _hint = 'चेहरा फ्रेम में लाएँ';
+  String _hint = 'चेहरा फ्रेम में लाएं';
   bool _busy = false, _captured = false; int _skip = 0, _confirm = 0; double _ring = 0;
 
   @override void initState() { super.initState(); _init(); }
@@ -50,7 +50,7 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
     _busy=false;
   }
 
-  String _hintFor(String k) => {'no_face':'चेहरा फ्रेम में लाएँ','face_too_far':'थोड़ा पास आएँ','face_too_close':'थोड़ा दूर हों','face_left':'थोड़ा दाएँ घूमें','face_right':'थोड़ा बाएँ घूमें','face_up':'थोड़ा ऊपर करें','face_down':'थोड़ा नीचे झुकें','eyes_closed':'आँखें खुली रखें','multiple_faces':'सिर्फ़ एक चेहरा रखें','blink_prompt':'एक बार आँखें झपकाएँ'}[k] ?? 'सीधा कैमरे में देखें';
+  String _hintFor(String k) => {'no_face':'चेहरा फ्रेम में लाएं','face_too_far':'थोड़ा पास आओ','face_too_close':'थोड़ा दूर हों','face_left':'थोड़ा दाएं घूमें','face_right':'थोड़ा बाएं घूमें','face_up':'थोड़ा ऊपर करें','face_down':'थोड़ा नीचे झुकें','eyes_closed':'आंखें खुली रखें','multiple_faces':'सिर्फ एक चेहरा रखें','blink_prompt':'एक बार आंखें झपकाएं'}[k] ?? 'सीधा कैमरे में देखें';
 
   Future<void> _capture() async {
     if (_captured||_cam==null) return; _captured=true;
@@ -60,7 +60,7 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
       if (await Vibration.hasVibrator()??false) Vibration.vibrate(duration:120);
       if (mounted) {
         final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => FaceReviewScreen(imagePath: file.path)));
-        if (result == null) { _captured=false; _confirm=0; _face.reset(); _cam?.startImageStream(_onFrame); setState((){_guide=GuideState.scanning;_hint='चेहरा फ्रेम में लाएँ';}); }
+        if (result == null) { _captured=false; _confirm=0; _face.reset(); _cam?.startImageStream(_onFrame); setState((){_guide=GuideState.scanning;_hint='चेहरा फ्रेम में लाएं';}); }
         else if (mounted) { Navigator.pop(context, result); }
       }
     } catch (_) { _captured=false; }
@@ -100,3 +100,17 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
       return null;
     }
   }
+
+  @override void dispose() { _cam?.dispose(); _face.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_cam==null||!_cam!.value.isInitialized) return const Scaffold(backgroundColor: Color(0xFF0A0A0A), body: Center(child: CircularProgressIndicator(color: Color(0xFFE53935))));
+    return Scaffold(backgroundColor: Colors.black, body: Stack(children: [
+      Positioned.fill(child: CameraPreview(_cam!)),
+      Positioned.fill(child: CustomPaint(painter: FaceOverlayPainter(_guide,_ring))),
+      const Positioned(top:40,left:8,child: BackButton(color: Colors.white)),
+      Positioned(bottom:0,left:0,right:0,child: Container(padding: const EdgeInsets.symmetric(vertical:18,horizontal:20), color: const Color(0xCC000000), child: Text(_hint, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize:18)))),
+    ]));
+  }
+}
