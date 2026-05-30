@@ -1,6 +1,5 @@
 import 'dart:async';
-import 'dart:io';
-import 'dart:typed_data';
+import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -26,7 +25,7 @@ class _DocumentCaptureScreenState extends State<DocumentCaptureScreen> {
   final _docAnalyzer = DocumentAnalyzer();
   DocumentType _type = DocumentType.aadhaar;
   GuideState _guide = GuideState.scanning;
-  String _hint = 'दस्तावेज़ को फ्रेम में लाएँ';
+  String _hint = 'दस्तावेज़ को फ्रेम में लाएं';
   bool _busy = false, _captured = false;
   int _frameSkip = 0, _ocrSkip = 0, _confirm = 0;
   bool _typeOk = false;
@@ -36,7 +35,7 @@ class _DocumentCaptureScreenState extends State<DocumentCaptureScreen> {
 
   Future<void> _init() async {
     final back = cameras.firstWhere((c) => c.lensDirection == CameraLensDirection.back, orElse: () => cameras.first);
-    final c = CameraController(back, ResolutionPreset.high, enableAudio: false, imageFormatGroup: ImageFormatGroup.yuv420);
+    final c = CameraController(back, ResolutionPreset.high, enableAudio: false, imageFormatGroup: ImageFormatGroup.nv21);
     try {
       await c.initialize(); await c.startImageStream(_onFrame); _cam = c;
       if (mounted) setState(() {}); _audio.play(_type.placeAudioKey);
@@ -47,19 +46,22 @@ class _DocumentCaptureScreenState extends State<DocumentCaptureScreen> {
     if (_busy || _captured || !mounted) return;
     _frameSkip = (_frameSkip+1)%3; if (_frameSkip != 0) return;
     _busy = true;
-    final yp = image.planes[0];
-    final s = await compute(analyzeFrame, FramePayload(yp.bytes, image.width, image.height, yp.bytesPerRow));
-    _ocrSkip = (_ocrSkip+1)%2;
-    if (_ocrSkip == 0 && s.blurVariance > 120 && s.brightness > 60) {
-      final input = _toInputImage(image);
-      if (input != null) {
-        final v = await _docAnalyzer.verifyDocument(input, _type);
-        _typeOk = v.isCorrectDocument;
-        _extractedNumber = v.extractedNumber ?? _extractedNumber;
+    try {
+      final yp = image.planes[0];
+      final yCopy = Uint8List.fromList(yp.bytes);
+      final s = await compute(analyzeFrame, FramePayload(yCopy, image.width, image.height, yp.bytesPerRow));
+      _ocrSkip = (_ocrSkip+1)%2;
+      if (_ocrSkip == 0 && s.blurVariance > 120 && s.brightness > 60) {
+        final input = _toInputImage(image);
+        if (input != null) {
+          final v = await _docAnalyzer.verifyDocument(input, _type);
+          _typeOk = v.isCorrectDocument;
+          _extractedNumber = v.extractedNumber ?? _extractedNumber;
+        }
       }
-    }
-    final result = _evaluate(s);
-    if (mounted) _applyResult(result);
+      final result = _evaluate(s);
+      if (mounted) _applyResult(result);
+    } catch (_) {}
     _busy = false;
   }
 
@@ -70,7 +72,7 @@ class _DocumentCaptureScreenState extends State<DocumentCaptureScreen> {
     if (s.brightness > 230) return const AnalysisResult(documentIssue: DocumentIssue.tooBright, message: 'बहुत ज़्यादा रोशनी', audioKey: 'too_bright');
     if (s.glareRatio > 0.20) return const AnalysisResult(documentIssue: DocumentIssue.glare, message: 'चमक आ रही है', audioKey: 'glare');
     if (s.blurVariance < 200) return const AnalysisResult(documentIssue: DocumentIssue.blur, message: 'थोड़ा स्थिर रखें', audioKey: 'blur');
-    if (s.coverage < 0.30) return const AnalysisResult(documentIssue: DocumentIssue.tooFar, message: 'थोड़ा पास लाएँ', audioKey: 'too_far');
+    if (s.coverage < 0.30) return const AnalysisResult(documentIssue: DocumentIssue.tooFar, message: 'थोड़ा पास लाएं', audioKey: 'too_far');
     if (s.coverage > 0.88) return const AnalysisResult(documentIssue: DocumentIssue.tooClose, message: 'थोड़ा दूर करें', audioKey: 'too_close');
     if (s.tiltDegrees > 20) return const AnalysisResult(documentIssue: DocumentIssue.tilted, message: 'कार्ड सीधा रखें', audioKey: 'tilt');
     return const AnalysisResult(status: CaptureStatus.ready, message: 'अब ठीक है', audioKey: 'doc_good', confidence: 0.95);
@@ -110,15 +112,42 @@ class _DocumentCaptureScreenState extends State<DocumentCaptureScreen> {
   void _retry() {
     _captured = false; _confirm = 0; _typeOk = false; _extractedNumber = null;
     _cam?.startImageStream(_onFrame);
-    setState(() { _guide = GuideState.scanning; _hint = 'दस्तावेज़ फ्रेम में लाएँ'; });
+    setState(() { _guide = GuideState.scanning; _hint = 'दस्तावेज़ फ्रेम में लाएं'; });
   }
 
   InputImage? _toInputImage(CameraImage image) {
+    const orientations = {
+      DeviceOrientation.portraitUp: 0,
+      DeviceOrientation.landscapeLeft: 90,
+      DeviceOrientation.portraitDown: 180,
+      DeviceOrientation.landscapeRight: 270,
+    };
     try {
-      final bytes = WriteBuffer(); for (final p in image.planes) bytes.putUint8List(p.bytes);
-      final rotation = InputImageRotationValue.fromRawValue(_cam!.description.sensorOrientation) ?? InputImageRotation.rotation0deg;
-      return InputImage.fromBytes(bytes: bytes.done().buffer.asUint8List(), metadata: InputImageMetadata(size: Size(image.width.toDouble(), image.height.toDouble()), rotation: rotation, format: InputImageFormat.nv21, bytesPerRow: image.planes[0].bytesPerRow));
-    } catch (_) { return null; }
+      final camera = _cam!.description;
+      final sensor = camera.sensorOrientation;
+      int? rot = orientations[_cam!.value.deviceOrientation];
+      if (rot == null) return null;
+      if (camera.lensDirection == CameraLensDirection.front) {
+        rot = (sensor + rot) % 360;
+      } else {
+        rot = (sensor - rot + 360) % 360;
+      }
+      final rotation = InputImageRotationValue.fromRawValue(rot);
+      final format = InputImageFormatValue.fromRawValue(image.format.raw);
+      if (rotation == null || format == null) return null;
+      final plane = image.planes.first;
+      return InputImage.fromBytes(
+        bytes: plane.bytes,
+        metadata: InputImageMetadata(
+          size: Size(image.width.toDouble(), image.height.toDouble()),
+          rotation: rotation,
+          format: format,
+          bytesPerRow: plane.bytesPerRow,
+        ),
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   @override void dispose() { _cam?.dispose(); _docAnalyzer.dispose(); super.dispose(); }
