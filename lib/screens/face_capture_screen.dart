@@ -66,23 +66,36 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
   }
 
   InputImage? _toInputImage(CameraImage image) {
+    const orientations = {
+      DeviceOrientation.portraitUp: 0,
+      DeviceOrientation.landscapeLeft: 90,
+      DeviceOrientation.portraitDown: 180,
+      DeviceOrientation.landscapeRight: 270,
+    };
     try {
-      final bytes=WriteBuffer(); for (final p in image.planes) bytes.putUint8List(p.bytes);
-      final rotation = InputImageRotationValue.fromRawValue(_cam!.description.sensorOrientation)??InputImageRotation.rotation270deg;
-      return InputImage.fromBytes(bytes: bytes.done().buffer.asUint8List(), metadata: InputImageMetadata(size: Size(image.width.toDouble(),image.height.toDouble()), rotation: rotation, format: InputImageFormat.nv21, bytesPerRow: image.planes[0].bytesPerRow));
-    } catch (_) { return null; }
+      final camera = _cam!.description;
+      final sensor = camera.sensorOrientation;
+      int? rot = orientations[_cam!.value.deviceOrientation];
+      if (rot == null) return null;
+      if (camera.lensDirection == CameraLensDirection.front) {
+        rot = (sensor + rot) % 360;
+      } else {
+        rot = (sensor - rot + 360) % 360;
+      }
+      final rotation = InputImageRotationValue.fromRawValue(rot);
+      final format = InputImageFormatValue.fromRawValue(image.format.raw);
+      if (rotation == null || format == null) return null;
+      final plane = image.planes.first;
+      return InputImage.fromBytes(
+        bytes: plane.bytes,
+        metadata: InputImageMetadata(
+          size: Size(image.width.toDouble(), image.height.toDouble()),
+          rotation: rotation,
+          format: format,
+          bytesPerRow: plane.bytesPerRow,
+        ),
+      );
+    } catch (_) {
+      return null;
+    }
   }
-
-  @override void dispose() { _cam?.dispose(); _face.dispose(); super.dispose(); }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_cam==null||!_cam!.value.isInitialized) return const Scaffold(backgroundColor: Color(0xFF0A0A0A), body: Center(child: CircularProgressIndicator(color: Color(0xFFE53935))));
-    return Scaffold(backgroundColor: Colors.black, body: Stack(children: [
-      Positioned.fill(child: CameraPreview(_cam!)),
-      Positioned.fill(child: CustomPaint(painter: FaceOverlayPainter(_guide,_ring))),
-      const Positioned(top:40,left:8,child: BackButton(color: Colors.white)),
-      Positioned(bottom:0,left:0,right:0,child: Container(padding: const EdgeInsets.symmetric(vertical:18,horizontal:20), color: const Color(0xCC000000), child: Text(_hint, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize:18)))),
-    ]));
-  }
-}
