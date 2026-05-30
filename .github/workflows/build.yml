@@ -20,6 +20,11 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install gtts && python generate_audio.py
+      - name: Regenerate Android project
+        run: |
+          rm -rf android
+          flutter create --platforms=android --org com.satincreditcare .
+          sed -i '/<application/i\    <uses-permission android:name="android.permission.CAMERA"/>\n    <uses-permission android:name="android.permission.VIBRATE"/>' android/app/src/main/AndroidManifest.xml
       - run: flutter pub get
       - run: flutter build apk --release
       - uses: actions/upload-artifact@v4
