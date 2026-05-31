@@ -29,7 +29,11 @@ class _DocumentCaptureScreenState extends State<DocumentCaptureScreen> {
   bool _busy = false, _captured = false;
   int _frameSkip = 0, _ocrSkip = 0, _confirm = 0;
   bool _typeOk = false;
+  bool _numberOk = false;
   String? _extractedNumber;
+
+  // In documents ke liye number zaroori hai (capture se pehle)
+  bool get _needsNumber => _type == DocumentType.aadhaar || _type == DocumentType.pan;
 
   @override void initState() { super.initState(); _init(); }
 
@@ -51,12 +55,15 @@ class _DocumentCaptureScreenState extends State<DocumentCaptureScreen> {
       final yCopy = Uint8List.fromList(yp.bytes);
       final s = await compute(analyzeFrame, FramePayload(yCopy, image.width, image.height, yp.bytesPerRow));
       _ocrSkip = (_ocrSkip+1)%2;
-      if (_ocrSkip == 0 && s.blurVariance > 120 && s.brightness > 60) {
+      if (_ocrSkip == 0 && s.blurVariance > 60 && s.brightness > 50) {
         final input = _toInputImage(image);
         if (input != null) {
           final v = await _docAnalyzer.verifyDocument(input, _type);
-          _typeOk = v.isCorrectDocument;
-          _extractedNumber = v.extractedNumber ?? _extractedNumber;
+          if (v.isCorrectDocument) _typeOk = true;
+          if (v.extractedNumber != null) {
+            _numberOk = true;
+            _extractedNumber = v.extractedNumber;
+          }
         }
       }
       final result = _evaluate(s);
@@ -66,15 +73,16 @@ class _DocumentCaptureScreenState extends State<DocumentCaptureScreen> {
   }
 
   AnalysisResult _evaluate(FrameStats s) {
-    if (!_typeOk) return AnalysisResult(documentIssue: DocumentIssue.wrongDocument, message: '${_type.displayName} नहीं दिख रहा', audioKey: _type.notFoundAudioKey);
+    if (!_typeOk) return AnalysisResult(documentIssue: DocumentIssue.wrongDocument, message: '${_type.displayName} दिखाएं', audioKey: _type.notFoundAudioKey);
     if (s.blurVariance < 80) return const AnalysisResult(documentIssue: DocumentIssue.veryBlur, message: 'फ़ोटो धुंधली है', audioKey: 'very_blur');
     if (s.brightness < 50) return const AnalysisResult(documentIssue: DocumentIssue.lowLight, message: 'रोशनी कम है', audioKey: 'low_light');
-    if (s.brightness > 230) return const AnalysisResult(documentIssue: DocumentIssue.tooBright, message: 'बहुत ज़्यादा रोशनी', audioKey: 'too_bright');
-    if (s.glareRatio > 0.20) return const AnalysisResult(documentIssue: DocumentIssue.glare, message: 'चमक आ रही है', audioKey: 'glare');
-    if (s.blurVariance < 200) return const AnalysisResult(documentIssue: DocumentIssue.blur, message: 'थोड़ा स्थिर रखें', audioKey: 'blur');
-    if (s.coverage < 0.30) return const AnalysisResult(documentIssue: DocumentIssue.tooFar, message: 'थोड़ा पास लाएं', audioKey: 'too_far');
-    if (s.coverage > 0.88) return const AnalysisResult(documentIssue: DocumentIssue.tooClose, message: 'थोड़ा दूर करें', audioKey: 'too_close');
-    if (s.tiltDegrees > 20) return const AnalysisResult(documentIssue: DocumentIssue.tilted, message: 'कार्ड सीधा रखें', audioKey: 'tilt');
+    if (s.brightness > 235) return const AnalysisResult(documentIssue: DocumentIssue.tooBright, message: 'बहुत ज़्यादा रोशनी', audioKey: 'too_bright');
+    if (s.glareRatio > 0.25) return const AnalysisResult(documentIssue: DocumentIssue.glare, message: 'चमक आ रही है', audioKey: 'glare');
+    if (s.blurVariance < 160) return const AnalysisResult(documentIssue: DocumentIssue.blur, message: 'थोड़ा स्थिर रखें', audioKey: 'blur');
+    // type mil gaya par number nahi -> card adhura/bahut paas hai
+    if (_needsNumber && !_numberOk) {
+      return const AnalysisResult(documentIssue: DocumentIssue.tooClose, message: 'थोड़ा दूर करें, पूरा कार्ड दिखाएं', audioKey: 'too_close');
+    }
     return const AnalysisResult(status: CaptureStatus.ready, message: 'अब ठीक है', audioKey: 'doc_good', confidence: 0.95);
   }
 
@@ -110,7 +118,7 @@ class _DocumentCaptureScreenState extends State<DocumentCaptureScreen> {
   }
 
   void _retry() {
-    _captured = false; _confirm = 0; _typeOk = false; _extractedNumber = null;
+    _captured = false; _confirm = 0; _typeOk = false; _numberOk = false; _extractedNumber = null;
     _cam?.startImageStream(_onFrame);
     setState(() { _guide = GuideState.scanning; _hint = 'दस्तावेज़ फ्रेम में लाएं'; });
   }
@@ -158,7 +166,7 @@ class _DocumentCaptureScreenState extends State<DocumentCaptureScreen> {
     return Scaffold(backgroundColor: Colors.black, body: Stack(children: [
       Positioned.fill(child: CameraPreview(_cam!)),
       Positioned.fill(child: CustomPaint(painter: DocOverlayPainter(_guide))),
-      Positioned(top: 40, left: 0, right: 0, child: SingleChildScrollView(scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 56), child: Row(children: DocumentType.values.map((t) { final sel = t==_type; return Padding(padding: const EdgeInsets.symmetric(horizontal:4), child: ChoiceChip(label: Text(t.displayName), selected: sel, selectedColor: const Color(0xFFE53935), backgroundColor: Colors.black54, labelStyle: TextStyle(color: sel?Colors.white:Colors.white70), onSelected: (_) { setState(() { _type=t; _typeOk=false; _confirm=0; }); _audio.play(t.placeAudioKey); })); }).toList()))),
+      Positioned(top: 40, left: 0, right: 0, child: SingleChildScrollView(scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 56), child: Row(children: DocumentType.values.map((t) { final sel = t==_type; return Padding(padding: const EdgeInsets.symmetric(horizontal:4), child: ChoiceChip(label: Text(t.displayName), selected: sel, selectedColor: const Color(0xFFE53935), backgroundColor: Colors.black54, labelStyle: TextStyle(color: sel?Colors.white:Colors.white70), onSelected: (_) { setState(() { _type=t; _typeOk=false; _numberOk=false; _confirm=0; _extractedNumber=null; }); _audio.play(t.placeAudioKey); })); }).toList()))),
       Positioned(top: 40, left: 8, child: const BackButton(color: Colors.white)),
       Positioned(bottom: 0, left: 0, right: 0, child: Container(padding: const EdgeInsets.symmetric(vertical:18, horizontal:20), color: const Color(0xCC000000), child: Row(children: [Icon(_guide==GuideState.ready?Icons.check_circle:_guide==GuideState.error?Icons.error:Icons.hourglass_top, color: _guide==GuideState.ready?const Color(0xFF00C853):_guide==GuideState.error?const Color(0xFFFF3D00):const Color(0xFFFFD600)), const SizedBox(width:12), Expanded(child: Text(_hint, style: const TextStyle(color: Colors.white, fontSize: 17)))]))),
     ]));
